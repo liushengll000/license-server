@@ -1,34 +1,21 @@
 {
   "name": "license-server",
   "version": "1.0.0",
-  "description": "发卡激活码服务器",
+  "description": "发卡服务器",
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
-    "prisma:init": "npx prisma migrate dev --name init",
-    "prisma:studio": "npx prisma studio",
-    "prisma:deploy": "prisma migrate deploy",
-    "prisma:generate": "prisma generate"
+    "start": "node dist/index.js"
   },
   "dependencies": {
-    "@prisma/client": "5.19.1",
-    "dotenv": "^16.4.1",
+    "dotenv": "^16.4.5",
     "express": "^4.18.2",
-    "jsonwebtoken": "^9.0.2",
-    "prisma": "5.19.1"
-  },
-  "devDependencies": {
-    "@types/express": "^4.17.21",
-    "@types/jsonwebtoken": "^9.0.5",
-    "@types/node": "^20.11.10",
+    "sqlite3": "^5.1.7",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "author": "AuthorLiu",
-  "license": "MIT"
+  }
 }

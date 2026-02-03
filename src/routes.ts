@@ -1,109 +1,92 @@
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
-import { signToken, verifyToken, genCode } from './utils';
+import { db } from './index';
 import dotenv from 'dotenv';
 dotenv.config();
 
-// Prisma客户端单例（修复原代码的bug，避免数据库重复连接）
-const prisma = new PrismaClient({
-  log: ['query'], // 打印数据库操作日志，方便奶奶排查问题
-});
 const router = Router();
+// 从环境变量获取密码（和之前的.env一致，不用改）
+const GEN_PASSWORD = process.env.GEN_PASSWORD || '';
+const JWT_SECRET = process.env.JWT_SECRET || 'nainai-secret-key';
 
-// 从环境变量取生成激活码的密码，奶奶后面在.env里改
-const GEN_PASSWORD = process.env.GEN_PASSWORD || 'nainai123';
+// 生成随机激活码（6位大写字母+数字，和之前一样）
+function generateLicenseCode() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
 
-/**
- * 【奶奶后台专用】批量生成激活码
- * 需传密码和生成数量，防止别人乱生成
- * 示例：传 { "password": "nainai123", "n": 10 } 生成10个激活码
- */
+// 接口1：生成激活码（奶奶专用，需要密码）
 router.post('/gen', async (req, res) => {
   try {
-    const { password, n = 1 } = req.body;
-    // 先验证密码，密码错了不让生成
+    const { password, n = 5 } = req.body;
+    // 验证密码
     if (password !== GEN_PASSWORD) {
-      return res.json({ success: false, message: '生成激活码的密码错啦～' });
+      return res.json({ code: 403, msg: '密码错误！', data: null });
     }
-    // 限制每次最多生成100个，避免服务器卡
-    const generateNum = Math.min(Number(n), 100);
-    if (isNaN(generateNum) || generateNum < 1) {
-      return res.json({ success: false, message: '要生成的数量得是数字，且至少1个～' });
-    }
-    const codes: string[] = [];
-    // 批量生成激活码并存到数据库
-    for (let i = 0; i < generateNum; i++) {
-      const code = genCode();
-      // 防止激活码重复（原代码没考虑，补全）
-      const exist = await prisma.licenseCode.findUnique({ where: { code } });
-      if (exist) { i--; continue; }
-      await prisma.licenseCode.create({ data: { code } });
+    // 生成n个激活码
+    const codes = [];
+    for (let i = 0; i < n; i++) {
+      const code = generateLicenseCode();
+      // 插入数据库（避免重复）
+      await db.run('INSERT OR IGNORE INTO license_codes (code) VALUES (?)', [code]);
       codes.push(code);
     }
-    res.json({ success: true, message: `生成了${codes.length}个激活码～`, codes });
+    res.json({ code: 200, msg: '生成成功！', data: codes });
   } catch (error) {
-    // 错误处理，服务器不会崩，还会告诉奶奶哪里错了
-    console.error('生成激活码出错：', error);
-    res.json({ success: false, message: '生成失败，看看小黑窗的错误信息～' });
+    res.json({ code: 500, msg: '生成失败', error: (error as Error).message });
   }
 });
 
-/**
- * 【用户用】激活码激活
- * 用户传 { "code": "激活码", "deviceId": "设备ID" }，返回令牌
- */
+// 接口2：激活激活码（用户用）
 router.post('/activate', async (req, res) => {
   try {
     const { code, deviceId } = req.body;
-    // 检查参数是否传了，没传直接返回
     if (!code || !deviceId) {
-      return res.json({ success: false, message: '要传激活码和设备ID哦～' });
+      return res.json({ code: 400, msg: '激活码和设备ID不能为空！' });
     }
-    // 查数据库里的激活码
-    const lic = await prisma.licenseCode.findUnique({ where: { code } });
-    // 激活码不存在或已使用，返回无效
-    if (!lic || lic.used) {
-      return res.json({ success: false, message: '激活码无效或已使用～' });
+    // 检查激活码是否存在且未使用
+    const row = await db.get('SELECT * FROM license_codes WHERE code = ? AND is_used = 0', [code]);
+    if (!row) {
+      return res.json({ code: 404, msg: '激活码不存在或已使用！' });
     }
-    // 标记激活码为已使用，绑定设备ID
-    await prisma.licenseCode.update({
-      where: { code },
-      data: { used: true, deviceId }
-    });
-    // 生成令牌返回给用户
-    const token = signToken(deviceId);
-    res.json({ success: true, message: '激活成功～', token });
+    // 标记为已使用，绑定设备ID
+    await db.run(
+      'UPDATE license_codes SET is_used = 1, device_id = ? WHERE code = ?',
+      [deviceId, code]
+    );
+    // 生成简单令牌（和之前功能一致，字符串拼接）
+    const token = `${code}-${deviceId}-${Date.now()}`;
+    res.json({ code: 200, msg: '激活成功！', data: { token } });
   } catch (error) {
-    console.error('激活出错：', error);
-    res.json({ success: false, message: '激活失败，看看小黑窗的错误信息～' });
+    res.json({ code: 500, msg: '激活失败', error: (error as Error).message });
   }
 });
 
-/**
- * 【用户用】验证令牌是否有效
- * 地址栏传 ?token=令牌&deviceId=设备ID，返回是否有效
- * 修复原代码的bug：原参数名id改成deviceId，和逻辑一致
- */
+// 接口3：验证令牌（解析令牌验证）
 router.get('/verify', async (req, res) => {
   try {
-    const { token, deviceId } = req.query as { token?: string; deviceId?: string };
-    // 检查参数是否传了
+    const { token, deviceId } = req.query;
     if (!token || !deviceId) {
-      return res.json({ ok: false, message: '要传令牌和设备ID哦～' });
+      return res.json({ code: 400, msg: '令牌和设备ID不能为空！', ok: false });
     }
-    // 验证令牌
-    const ok = verifyToken(token, deviceId);
-    res.json({ ok, message: ok ? '令牌有效～' : '令牌无效或已过期～' });
+    // 解析令牌（和激活时的生成规则一致）
+    const [code] = (token as string).split('-');
+    // 检查激活码是否绑定该设备且已使用
+    const row = await db.get(
+      'SELECT * FROM license_codes WHERE code = ? AND device_id = ? AND is_used = 1',
+      [code, deviceId]
+    );
+    if (row) {
+      res.json({ code: 200, msg: '令牌有效～', ok: true });
+    } else {
+      res.json({ code: 403, msg: '令牌无效或已解绑！', ok: false });
+    }
   } catch (error) {
-    console.error('验证令牌出错：', error);
-    res.json({ ok: false, message: '验证失败，看看小黑窗的错误信息～' });
+    res.json({ code: 500, msg: '验证失败', error: (error as Error).message, ok: false });
   }
-});
-
-// 关闭数据库连接（防止服务器退出时的警告）
-process.on('SIGINT', async () => {
-  await prisma.$disconnect();
-  process.exit(0);
 });
 
 export default router;
