@@ -1,0 +1,17 @@
+# 忽略存密码的配置文件，核心！
+.env
+.env.example
+
+# 忽略node.js的插件文件夹（体积大，不用传，Render会自己装）
+node_modules/
+
+# 忽略编译后的文件（Render会自己编译）
+dist/
+
+# 忽略数据库文件（本地的激活码数据库，不用传）
+prisma/dev.db
+prisma/dev.db-journal
+
+# 忽略Git的日志和缓存文件
+.git/
+.DS_Store
