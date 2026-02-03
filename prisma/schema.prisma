@@ -6,7 +6,8 @@ datasource db {
 
 // 生成数据库客户端
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"] // 新加这行！双系统适配
 }
 
 // 激活码数据表，存激活码、是否用过、绑定的设备ID
